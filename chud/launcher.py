@@ -1,0 +1,306 @@
+"""Launch the phone-sized Chrome window, and generate its home-screen launcher page.
+
+We kill any previous phone for our dedicated profile before launching, so Chrome's
+single-instance-per-profile behavior can't turn a new launch into "just a tab in the
+old window" — each launch is a clean, independent app window.
+"""
+from __future__ import annotations
+
+import html
+import json
+import subprocess
+from urllib.parse import urlparse
+
+from . import config
+from .backends import PHONE_MARKER
+from .platform import chrome_binary, os_name
+
+
+_HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</title>
+<style>
+  :root{--fg:#1c1c1e;--dim:#00000073;--tile:clamp(46px,12vw,60px)}
+  body.dark{--fg:#f2f4f8;--dim:#ffffff8c}
+  body{margin:0;background:#fff;color:var(--fg);font-family:system-ui,sans-serif;
+       transition:background .25s}
+  h1{font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim);
+     text-align:center;margin:26px 0 4px}
+  h2{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);
+     max-width:820px;margin:14px auto 0;padding:0 18px;box-sizing:border-box}
+  .grid{display:grid;gap:16px 6px;padding:14px;max-width:820px;margin:0 auto;
+        grid-template-columns:repeat(auto-fill,minmax(calc(var(--tile) + 24px),1fr))}
+  a{display:flex;flex-direction:column;align-items:center;gap:6px;
+    text-decoration:none;color:var(--fg)}
+  .ico{position:relative;width:var(--tile);height:var(--tile);
+       border-radius:calc(var(--tile)*.26);
+       background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.65);
+       backdrop-filter:blur(18px) saturate(1.6);
+       -webkit-backdrop-filter:blur(18px) saturate(1.6);
+       display:flex;align-items:center;justify-content:center;
+       font-size:calc(var(--tile)*.42);font-weight:700;color:var(--dim);
+       box-shadow:0 4px 14px rgba(0,0,0,.12)}
+  body.dark .ico{background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.18);
+       box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  .ico img{position:absolute;width:calc(var(--tile)*.63);height:calc(var(--tile)*.63)}
+  .label{font-size:clamp(12px,calc(var(--tile)*.24),14px);font-weight:600;
+         letter-spacing:.01em;max-width:calc(var(--tile) + 22px);overflow:hidden;
+         text-overflow:ellipsis;white-space:nowrap}
+  p{font-size:10px;color:var(--dim);text-align:center;margin:18px 0}
+  #cfg{position:fixed;top:10px;right:10px;width:32px;height:32px;border-radius:50%;
+       border:none;background:transparent;color:var(--dim);padding:0;cursor:pointer;
+       display:flex;align-items:center;justify-content:center}
+  #cfg:hover{background:rgba(128,128,128,.18)}
+  #cfg svg{width:17px;height:17px}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));
+            gap:12px;padding:8px 6px;justify-items:center}
+  .sw{width:38px;height:38px;border-radius:50%;border:1px solid #3a4356;
+      cursor:pointer;padding:0}
+  .sw.on{outline:2px solid #3b82f6;outline-offset:2px}
+  .rm{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;
+      background:#2a3040;color:#8b93a7;border:none;font-size:11px;line-height:1;
+      display:none;cursor:pointer;padding:0}
+  a:hover .rm{display:block}
+  #ov{position:fixed;inset:0;background:#000a;display:flex;align-items:center;
+      justify-content:center;z-index:9}
+  #ov[hidden]{display:none}  /* our display:flex would otherwise defeat [hidden] */
+  #sheet{background:#151a25;border:1px solid #232a3a;border-radius:14px;padding:12px;
+         width:min(290px,calc(100vw - 36px));max-height:74vh;overflow:auto;
+         box-shadow:0 12px 40px #000b}
+  #sheet h3{margin:2px 6px 10px;font-size:11px;letter-spacing:.15em;
+            text-transform:uppercase;color:#5b6478}
+  .row{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:9px;
+       cursor:pointer;font-size:13px}
+  .row:hover{background:#1f2634}
+  .row img,.row .dot{width:22px;height:22px;border-radius:6px}
+  .row .dot{background:#1a1f2b;display:flex;align-items:center;justify-content:center;
+            font-size:13px;font-weight:700;color:#8b93a7}
+  #sheet input{width:100%;box-sizing:border-box;margin:6px 0;padding:9px 10px;
+               border-radius:9px;border:1px solid #2a3345;background:#0b0d12;
+               color:#cfd6e4;font-size:13px;outline:none}
+  .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+  .btns button{border:none;border-radius:8px;padding:7px 14px;font-size:12px;
+               cursor:pointer;background:#232a3a;color:#cfd6e4}
+  .btns .go{background:#3b82f6;color:#fff}
+</style></head><body>
+<button id="cfg" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+<h1>chud</h1>
+{{grids}}
+<p>Alt+&#8592; returns here</p>
+<div id="ov" hidden><div id="sheet"></div></div>
+<script>
+// User-added apps live in localStorage (the phone's own Chrome profile) so the
+// static home page can grow without a server; regeneration never wipes them.
+const KEY = "chudCustomSites";
+const fav = document.getElementById("fav");
+const addBtn = document.getElementById("add");
+const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; } };
+const save = s => localStorage.setItem(KEY, JSON.stringify(s));
+function render() {
+  document.querySelectorAll(".custom").forEach(el => el.remove());
+  load().forEach((s, i) => {
+    const a = document.createElement("a"); a.href = s.url; a.className = "custom";
+    const ico = document.createElement("div"); ico.className = "ico";
+    const span = document.createElement("span"); span.textContent = (s.name || "?")[0].toUpperCase();
+    const img = document.createElement("img");
+    img.src = "https://www.google.com/s2/favicons?domain=" + new URL(s.url).hostname + "&sz=64";
+    img.onload = () => span.style.display = "none";
+    img.onerror = () => img.remove();
+    const rm = document.createElement("button"); rm.className = "rm"; rm.textContent = "×";
+    rm.title = "Remove";
+    rm.onclick = ev => { ev.preventDefault(); ev.stopPropagation();
+                         const c = load(); c.splice(i, 1); save(c); render(); };
+    ico.append(span, img, rm);
+    const label = document.createElement("div"); label.className = "label"; label.textContent = s.name;
+    a.append(ico, label);
+    fav.insertBefore(a, addBtn);
+  });
+}
+// "+" opens a picker sheet: the catalog apps not yet on the grid, then "Other…".
+const CATALOG = {{catalog}};
+const FAVS = {{present}};
+const ov = document.getElementById("ov");
+const sheet = document.getElementById("sheet");
+ov.addEventListener("click", e => { if (e.target === ov) ov.hidden = true; });
+
+function addRow(parent, iconHost, text, onclick) {
+  const r = document.createElement("div"); r.className = "row";
+  if (iconHost) {
+    const img = document.createElement("img");
+    img.src = "https://www.google.com/s2/favicons?domain=" + iconHost + "&sz=64";
+    img.onerror = () => img.remove();
+    r.append(img);
+  } else {
+    const dot = document.createElement("div"); dot.className = "dot"; dot.textContent = "+";
+    r.append(dot);
+  }
+  const t = document.createElement("span"); t.textContent = text;
+  r.append(t); r.onclick = onclick; parent.append(r);
+}
+
+function openSheet() {
+  const have = new Set(FAVS.concat(load().map(s => s.url)));
+  sheet.textContent = "";
+  const h = document.createElement("h3"); h.textContent = "Add an app"; sheet.append(h);
+  for (const s of CATALOG) {
+    if (have.has(s.url)) continue;
+    addRow(sheet, new URL(s.url).hostname, s.name, () => {
+      const c = load(); c.push(s); save(c); render(); ov.hidden = true;
+    });
+  }
+  addRow(sheet, null, "Other…", otherForm);
+  ov.hidden = false;
+}
+
+function otherForm() {
+  sheet.textContent = "";
+  const h = document.createElement("h3"); h.textContent = "Add by URL"; sheet.append(h);
+  const inp = document.createElement("input");
+  inp.placeholder = "reddit.com or https://…";
+  const btns = document.createElement("div"); btns.className = "btns";
+  const cancel = document.createElement("button"); cancel.textContent = "Cancel";
+  cancel.onclick = () => ov.hidden = true;
+  const go = document.createElement("button"); go.className = "go"; go.textContent = "Add";
+  const submit = () => {
+    let url = inp.value.trim(); if (!url) return;
+    if (!url.includes("://")) url = "https://" + url;
+    let name;
+    try { name = new URL(url).hostname.replace(/^www\./, ""); }
+    catch { inp.value = ""; inp.placeholder = "invalid URL — try again"; return; }
+    const c = load(); c.push({ name, url }); save(c); render(); ov.hidden = true;
+  };
+  go.onclick = submit;
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  btns.append(cancel, go);
+  sheet.append(inp, btns);
+  inp.focus();
+}
+
+// Wallpaper: a flat color in localStorage; text + icon glass adapt to its brightness.
+const WKEY = "chudWallpaper";
+const WALLS = ["#ffffff","#e9e9ef","#cfe3f5","#dcead9","#f5dee4",
+               "#000000","#0b0d12","#182338","#2a1e3f","#123326"];
+function applyWall(c) {
+  document.body.style.background = c;
+  const n = parseInt(c.slice(1), 16);
+  const lum = (0.299*(n>>16&255) + 0.587*(n>>8&255) + 0.114*(n&255)) / 255;
+  document.body.classList.toggle("dark", lum < 0.55);
+}
+applyWall(localStorage.getItem(WKEY) || "#ffffff");
+
+document.getElementById("cfg").addEventListener("click", () => {
+  sheet.textContent = "";
+  const h = document.createElement("h3"); h.textContent = "Wallpaper"; sheet.append(h);
+  const wrap = document.createElement("div"); wrap.className = "swatches";
+  const cur = localStorage.getItem(WKEY) || "#ffffff";
+  for (const c of WALLS) {
+    const b = document.createElement("button");
+    b.className = "sw" + (c === cur ? " on" : "");
+    b.style.background = c;
+    b.onclick = () => { localStorage.setItem(WKEY, c); applyWall(c);
+                        wrap.querySelector(".on")?.classList.remove("on");
+                        b.classList.add("on"); };
+    wrap.append(b);
+  }
+  sheet.append(wrap);
+  ov.hidden = false;
+});
+
+addBtn.addEventListener("click", e => { e.preventDefault(); openSheet(); });
+render();
+</script></body></html>
+"""
+
+
+def _tile(name: str, url: str) -> str:
+    host = urlparse(url).netloc or url
+    letter = html.escape((name or "?")[0].upper())
+    return (
+        f'<a href="{html.escape(url, quote=True)}"><div class="ico"><span>{letter}</span>'
+        f'<img src="https://www.google.com/s2/favicons?domain={html.escape(host, quote=True)}&amp;sz=64"'
+        # The letter is only a fallback — favicons are often transparent, so hide
+        # it once the real icon arrives instead of layering them.
+        f' onload="this.previousElementSibling.style.display=\'none\'" onerror="this.remove()" alt=""></div>'
+        f'<div class="label">{html.escape(name)}</div></a>'
+    )
+
+
+def home_url() -> str:
+    """(Re)generate the phone's home screen — a grid of favorites + recents the user
+    can tap to switch apps inside the phone — and return its file:// URL."""
+    cfg = config.load_config()
+    st = config.load_state()
+    favs = cfg.get("sites", [])
+    fav_urls = {s["url"] for s in favs}
+
+    def _host(u: str) -> str:
+        return urlparse(u).netloc.removeprefix("www.")
+
+    # One recent per site: recents hold full URLs (e.g. two YouTube watch links),
+    # so dedupe by host and skip hosts already shown as favorites.
+    rec, seen = [], {_host(s["url"]) for s in favs}
+    for u in st.get("recents", []):
+        h = _host(u)
+        if u in fav_urls or not h or h in seen:
+            continue
+        seen.add(h)
+        rec.append(u)
+    rec = rec[:8]
+    add_tile = ('<a href="#" id="add" title="Add an app"><div class="ico"><span>+</span></div>'
+                '<div class="label">Add</div></a>')
+    grids = ('<div class="grid" id="fav">'
+             + "".join(_tile(s["name"], s["url"]) for s in favs) + add_tile + "</div>")
+    if rec:
+        grids += '<h2>Recent</h2><div class="grid">' + "".join(
+            _tile(_host(u) or u, u) for u in rec) + "</div>"
+    path = config.DIR / "home.html"
+    config.DIR.mkdir(parents=True, exist_ok=True)
+    page = (_HOME_TMPL.replace("{{grids}}", grids)
+            .replace("{{catalog}}", json.dumps(config.KNOWN_SITES))
+            .replace("{{present}}", json.dumps(sorted(fav_urls))))
+    path.write_text(page)
+    return path.as_uri()
+
+
+def _kill_existing(profile_dir: str) -> None:
+    name = os_name()
+    if name in ("linux", "macos"):
+        # No leading dashes in the pattern — pkill would parse them as its own options.
+        subprocess.run(["pkill", "-f", f"user-data-dir={profile_dir}"],
+                       capture_output=True, text=True)
+    elif name == "windows":
+        subprocess.run(["taskkill", "/F", "/FI", f"WINDOWTITLE eq *{PHONE_MARKER}*"],
+                       capture_output=True, text=True)
+
+
+def launch(url: str) -> None:
+    chrome = chrome_binary()
+    if not chrome:
+        raise RuntimeError("Chrome/Chromium not found on PATH. Install Google Chrome.")
+
+    cfg = config.load_config()
+    profile = cfg["profile_dir"]
+    w, h = cfg["size"]
+    x, y = cfg["position"]
+
+    _kill_existing(profile)
+
+    args = [
+        chrome,
+        f"--app={url}",
+        f"--user-data-dir={profile}",
+        f"--window-size={w},{h}",
+        f"--window-position={x},{y}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if os_name() == "linux":
+        # Stable WM_CLASS so the backend can find this window by class, not title.
+        args.append(f"--class={PHONE_MARKER}")
+
+    subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    if not url.startswith("file://"):  # the home screen itself isn't a "recent"
+        config.push_recent(url)

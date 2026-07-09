@@ -1,0 +1,25 @@
+[project]
+name = "chud"
+version = "0.1.0"
+description = "A phone-sized real Chrome window that hovers over your work while a coding agent generates, and snaps focus back when it needs you."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Mann Malviya" }]
+keywords = ["claude-code", "codex", "focus", "productivity"]
+
+[project.scripts]
+chud = "chud.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mannmalviya/chud"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["chud", "chud.backends"]
+
+[tool.setuptools.package-data]
+chud = ["hooks/*"]
