@@ -1,120 +1,71 @@
-# chud
+<p align="center">
+  <img src="assets/chud.png" alt="chud" width="420">
+</p>
 
-A phone-sized **real Chrome window** that hovers over your work while a coding agent
-(Claude Code / Codex) is generating — so you can scroll TikTok, Instagram, Chess.com,
-Lichess, or Tinder during the wait — and **snaps focus back to your editor the moment
-the agent finishes or needs you.**
+<h1 align="center">chud</h1>
 
-It's a real browser window, not an embed, so you get real login, real video, **real
-audio**, and native performance. Off by default (focus mode); you opt in per session.
+<p align="center"><b>A phone that hovers over your editor while your coding agent thinks — and yanks you back the second it's done.</b></p>
 
-```
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.9+-3776AB.svg?logo=python&logoColor=white" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20(X11)-lightgrey.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%7C%20Codex-d97757.svg" alt="Works with Claude Code and Codex">
+  <img src="https://img.shields.io/badge/browser-real%20Chrome%2C%20real%20audio-4285F4.svg?logo=googlechrome&logoColor=white" alt="Real Chrome">
+  <a href="https://github.com/mannmalviya/chud/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
+</p>
+
+---
+
+```text
 you submit a prompt ──▶ phone rises over your work ──▶ you scroll while the agent thinks
 agent finishes / asks ──▶ focus snaps back to your editor
 ```
 
-## How it works
-
-- The phone is a normal OS window (`chrome --app`, phone-sized, its own persistent
-  profile). Embedding real sites *inside* an editor is blocked by `X-Frame-Options`;
-  a separate window sidesteps that entirely.
-- A tiny CLI (`chud`) pins/raises windows via the OS: **Win32 / macOS
-  Accessibility / X11 (`wmctrl`+`xdotool`)**.
-- On Linux the phone is **frameless** — no title bar or browser chrome, just a
-  bare phone-shaped screen with its own status bar (clock + battery) on the
-  home screen. Move it with `Super`+drag.
-- Agent **hooks** flip between the phone and your "work window" (the terminal or
-  editor you launched the agent in, captured at session start):
-  - **Claude Code** — `UserPromptSubmit` (and answering an agent question) raises
-    the phone; finishing a turn, needing approval, or asking a question pauses the
-    phone's media, minimizes it, and raises your work window.
-  - **Codex** — its `notify` hook raises your work window on turn-complete / approval.
-- The phone opens on a **home screen** — a tappable grid of your favorite +
-  recent sites — so you can switch apps inside the phone. `Alt+←` returns to it,
-  `Alt+→` goes back into the app (the home screen and its ⚙ settings show these).
-- A **global hotkey** (`Ctrl+Alt+P` by default, customizable in setup or via
-  `chud config --set-shortcut`) flips between the phone and your work window
-  anytime, without waiting for a hook.
-
-## Platform support
-
-| | Windows | macOS | Linux (X11) | Linux (Wayland) |
-|---|---|---|---|---|
-| Supported | ✅ | ✅¹ | ✅ | ❌² |
-
-¹ Needs a one-time Accessibility permission; always-on-top is approximate.
-² Wayland forbids foreign-window control — log in with an **Xorg / X11** session.
+It's a **real Chrome window** shaped like a phone — real logins, real video, real audio.
+Scroll TikTok, Instagram, or play chess during the wait. When the agent finishes or
+needs you, the phone pauses its media, gets out of the way, and your editor takes focus.
+Off by default; you opt in per session.
 
 ## Install
 
-Any of these — they all end at `chud setup`:
-
 ```bash
-# 1) one-liner
 curl -fsSL https://raw.githubusercontent.com/mannmalviya/chud/main/install.sh | bash
-
-# 2) package manager
-pipx install chud && chud setup
-
-# 3) from a clone
-git clone https://github.com/mannmalviya/chud && cd chud && ./install.sh
 ```
 
-**Linux** also needs `wmctrl` + `xdotool` (the installer adds them):
-`sudo apt install wmctrl xdotool`.
+or:
+
+```bash
+pipx install chud && chud setup
+```
+
+Linux needs `wmctrl` + `xdotool` (the installer adds them). Wayland is unsupported — use an X11 session.
+
+### Install with Claude Code
+
+Paste this into Claude Code:
+
+```text
+Install chud (https://github.com/mannmalviya/chud): pipx install chud
+(or python3 -m pip install --user chud). On Linux, install wmctrl and
+xdotool, and warn me if $XDG_SESSION_TYPE is wayland. Then run
+`chud setup --mode focus --sites "Instagram,TikTok,Chess.com"` and
+verify with `chud doctor`. Don't hand-edit ~/.claude/settings.json —
+chud setup merges the hooks itself.
+```
 
 ## Usage
 
 ```bash
-chud setup        # onboarding: pick default mode + quick-toggle sites + hotkey
 chud on           # arm the break-phone for this session
 chud off          # focus mode
-chud toggle       # flip phone ↔ work (bound globally, Ctrl+Alt+P by default)
-chud app tiktok   # open a site in the phone (name or URL)
-chud doctor       # check OS / session / chrome / tools
-chud config       # show config;  --set-mode / --sites / --set-shortcut / --edit
-chud uninstall    # remove the agent hooks + hotkey
+chud toggle       # flip phone ↔ work (global hotkey: Ctrl+Alt+P)
+chud app tiktok   # open a site in the phone
+chud doctor       # check your setup
+chud uninstall    # remove hooks + hotkey
 ```
 
-**Default modes** (chosen in setup, editable anytime):
-- `focus` — off each session; opt in with `chud on`. *(default)*
-- `always` — armed automatically every session.
-- `ask` — prompts each session.
-
-Everything lives in `~/.chud/config.json` and is editable via
-`chud config --edit`.
-
-## For AI agents / Claude Code
-
-If you're an AI coding agent asked to install this, do exactly:
-
-1. Ensure `python3` and Google Chrome are present (`chud`'s `doctor` reports both).
-2. Install the CLI: `pipx install "<repo>"` (or `python3 -m pip install --user "<repo>"`).
-3. On Linux, ensure `wmctrl` and `xdotool` are installed (`apt`/`dnf`/`pacman`).
-   If the session is Wayland (`echo $XDG_SESSION_TYPE`), tell the user to switch to X11 — it won't work otherwise.
-4. Run `chud setup` (interactive) — or non-interactively:
-   `chud setup --mode focus --sites "Instagram,TikTok,Chess.com"`.
-5. Verify with `chud doctor`. Everything routes through the idempotent
-   `chud setup`, so re-running is safe.
-
-Do **not** hand-edit `~/.claude/settings.json` or `~/.codex/config.toml` — `setup`
-merges the hooks for you and `uninstall` removes them cleanly.
-
-## Uninstall
-
-```bash
-chud uninstall      # removes hooks from Claude Code + Codex
-rm -rf ~/.chud       # removes config, state, and the phone's Chrome profile
-```
-
-## Caveats
-
-- **Wayland** is unsupported (see above).
-- **macOS** always-on-top is approximate and needs an Accessibility grant.
-- **Codex** has no "turn started" event, so the phone auto-*hides* on turn-complete;
-  raise it with the toggle hotkey (or `chud phone`) when you kick off a Codex turn.
-- You're using the real sites in a real browser with your own login — no scraping.
-  Personal use.
+Config lives in `~/.chud/config.json` (`chud config --edit`).
 
 ## License
 

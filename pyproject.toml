@@ -22,4 +22,4 @@ build-backend = "setuptools.build_meta"
 packages = ["chud", "chud.backends"]
 
 [tool.setuptools.package-data]
-chud = ["hooks/*"]
+chud = ["home.html", "hooks/*"]
