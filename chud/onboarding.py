@@ -10,6 +10,15 @@ import sys
 from . import config, hooks, tui
 from .platform import supported, window_tool_status
 
+_BANNER = """
+ ██████╗██╗  ██╗██╗   ██╗██████╗
+██╔════╝██║  ██║██║   ██║██╔══██╗
+██║     ███████║██║   ██║██║  ██║
+██║     ██╔══██║██║   ██║██║  ██║
+╚██████╗██║  ██║╚██████╔╝██████╔╝
+ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝
+"""
+
 MODES = {
     "1": ("focus", "Off by default each session — opt in with `chud on` (recommended)"),
     "2": ("always", "On automatically every session"),
@@ -78,6 +87,15 @@ def _prompt_sites() -> list[dict]:
     return sites or list(config.KNOWN_SITES)
 
 
+def _prompt_shortcut(default: str) -> str:
+    """Global hotkey for `chud toggle`. Enter keeps the default."""
+    while True:
+        raw = input(f"\nShortcut to switch between chud and your agent [{default}]: ").strip() or default
+        if hooks.gnome_binding(raw):
+            return raw
+        print("  format: modifiers+key, e.g. Ctrl+Alt+P or Super+Space")
+
+
 def _login_tour(sites: list[dict]) -> None:
     """Open each chosen site in the phone so the user can log in once now.
 
@@ -109,10 +127,13 @@ def _login_tour(sites: list[dict]) -> None:
     print("  ✔ logins saved in the phone's profile.")
 
 
-def run(mode: str | None = None, sites_csv: str | None = None) -> None:
-    interactive = mode is None and sites_csv is None and sys.stdin.isatty()
+def run(mode: str | None = None, sites_csv: str | None = None,
+        shortcut: str | None = None) -> None:
+    interactive = (mode is None and sites_csv is None and shortcut is None
+                   and sys.stdin.isatty())
 
     if interactive:
+        print(_BANNER)
         print("── chud setup ──")
 
     cfg = config.load_config()
@@ -127,14 +148,23 @@ def run(mode: str | None = None, sites_csv: str | None = None) -> None:
             cfg["sites"] = _sites_from_csv(sites_csv)
         elif interactive:
             cfg["sites"] = _prompt_sites()
+
+        if shortcut is not None:
+            if hooks.gnome_binding(shortcut) is None:
+                print(f"invalid --shortcut {shortcut!r} — use modifiers+key, e.g. Ctrl+Alt+P",
+                      file=sys.stderr)
+                raise SystemExit(2)
+            cfg["toggle_shortcut"] = shortcut
+        elif interactive:
+            cfg["toggle_shortcut"] = _prompt_shortcut(cfg["toggle_shortcut"])
     except (KeyboardInterrupt, EOFError):
         print("\ncancelled — nothing saved.")
         raise SystemExit(130)
 
     config.save_config(cfg)
 
-    # Wire the agent triggers.
-    hooks.install_all()
+    # Wire the agent triggers + the global toggle hotkey.
+    hotkey_ok, hotkey_msg = hooks.install_all()
 
     # Report environment health.
     ok, detail = supported()
@@ -142,6 +172,7 @@ def run(mode: str | None = None, sites_csv: str | None = None) -> None:
     print("\nSaved to", config.CONFIG_PATH)
     print(f"  mode:  {cfg['default_mode']}")
     print(f"  sites: {', '.join(s['name'] for s in cfg['sites'])}")
+    print(f"  hotkey: {hotkey_msg}" if hotkey_ok else f"  hotkey: NOT registered — {hotkey_msg}")
     print(f"  platform: {'OK — ' + detail if ok else 'UNSUPPORTED'}")
     if not ok:
         print("   ", detail.replace("\n", "\n    "))

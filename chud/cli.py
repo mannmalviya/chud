@@ -60,43 +60,58 @@ def _raise_phone_settle() -> None:
     backends.raise_phone()
 
 
-def _watcher_pid() -> int | None:
-    """The live focus-watcher's pid, or None. Verified against /proc cmdline so
-    a recycled pid from an old session is never mistaken for ours."""
-    pid = config.load_state().get("watcher_pid")
+def _helper_pid(state_key: str, subcmd: str) -> int | None:
+    """The live pid of a detached helper (focus watcher / settler), or None.
+    Verified against /proc cmdline so a recycled pid from an old session is
+    never mistaken for ours."""
+    pid = config.load_state().get(state_key)
     if not pid:
         return None
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
-            if b"watch-focus" in f.read():
+            if subcmd.encode() in f.read():
                 return pid
     except OSError:
         pass
     return None
 
 
-def _spawn_focus_watcher() -> None:
-    """Detached helper that minimizes the phone whenever the user focuses
-    another window (see backends.watch_focus). It lives as long as the phone
-    window does; supersede any earlier one so they don't accumulate."""
-    if os_name() != "linux":
-        return
+def _kill_helper(state_key: str, subcmd: str) -> None:
     # Kill by remembered pid, not pkill -f — a pattern match can hit unrelated
-    # processes whose command line merely mentions the watcher. Take the whole
-    # process group so the xprop -spy child dies too.
-    old = _watcher_pid()
+    # processes whose command line merely mentions the helper. Take the whole
+    # process group so any child (e.g. the watcher's xprop -spy) dies too.
+    old = _helper_pid(state_key, subcmd)
     if old:
         try:
             os.killpg(old, signal.SIGTERM)
         except OSError:
             pass
+
+
+def _spawn_helper(state_key: str, subcmd: str) -> None:
+    """Run a chud subcommand as a detached background helper, superseding any
+    earlier instance so they don't accumulate."""
+    if os_name() != "linux":
+        return
+    _kill_helper(state_key, subcmd)
     script = shutil.which("chud")
     argv = [script] if script else [sys.executable, "-m", "chud"]
-    proc = subprocess.Popen(argv + ["watch-focus"],
+    proc = subprocess.Popen(argv + [subcmd],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             start_new_session=True)
-    config.update_state(watcher_pid=proc.pid)
+    config.update_state(**{state_key: proc.pid})
+
+
+def _watcher_pid() -> int | None:
+    return _helper_pid("watcher_pid", "watch-focus")
+
+
+def _spawn_focus_watcher() -> None:
+    """Detached helper that minimizes the phone whenever the user focuses
+    another window (see backends.watch_focus). It lives as long as the phone
+    window does."""
+    _spawn_helper("watcher_pid", "watch-focus")
 
 
 def _ensure_phone(url: str) -> None:
@@ -114,7 +129,7 @@ def _ensure_phone(url: str) -> None:
 # ---------------------------------------------------------------- commands
 
 def cmd_setup(a) -> None:
-    onboarding.run(mode=a.mode, sites_csv=a.sites)
+    onboarding.run(mode=a.mode, sites_csv=a.sites, shortcut=a.shortcut)
 
 
 def cmd_doctor(_a) -> None:
@@ -167,11 +182,10 @@ def cmd_phone(a) -> None:
         # A new prompt always ends the snooze, even when the raise below is
         # suppressed because the user is still typing.
         st = config.update_state(snoozed=False)
-    if a.if_armed and not backends.phone_focused():
-        # Hook-driven raise. If the user is actively typing or mousing in
-        # another window, popping the phone over them would interrupt — skip.
-        # The every-tool hook retries, so the phone appears at the first hook
-        # after their input has gone quiet for a beat.
+    # Only the mid-generation re-raise (the every-tool hook) defers to active
+    # typing. A prompt submit or question answer is Enter — a deliberate
+    # hand-off to the agent — so it raises immediately despite idle ≈ 0.
+    if a.if_armed and a.if_hidden and not backends.phone_focused():
         idle = backends.user_idle_ms()
         if idle is not None and idle < ACTIVE_INPUT_MS:
             return
@@ -210,7 +224,34 @@ def cmd_work(_a) -> None:
         return
     backends.pause_phone_media(config.load_config()["profile_dir"])
     backends.minimize_phone()
+    # The user is actively typing/mousing in some other window (e.g. their
+    # browser) — stealing focus mid-keystroke would interrupt real work. Tidy
+    # the phone away (above) but leave focus where it is.
+    idle = backends.user_idle_ms()
+    if idle is not None and idle < ACTIVE_INPUT_MS:
+        return
     backends.raise_work(st.get("work_window"))
+
+
+def cmd_toggle(_a) -> None:
+    """Manual flip between the phone and the work window (the global hotkey).
+    A deliberate user gesture, so no idle guard — they asked for the switch."""
+    if not _guard_supported():
+        return
+    st = config.load_state()
+    if backends.phone_focused():
+        # Flipping away by hand mid-generation is the same gesture as clicking
+        # away: snooze so the every-tool hook doesn't pop the phone right back.
+        config.update_state(snoozed=True)
+        backends.pause_phone_media(config.load_config()["profile_dir"])
+        backends.minimize_phone()
+        if st.get("work_window"):
+            backends.raise_work(st["work_window"])
+    else:
+        config.update_state(snoozed=False)
+        _ensure_phone(launcher.home_url())
+        _raise_phone_settle()
+        _spawn_focus_watcher()
 
 
 def cmd_watch_focus(_a) -> None:
@@ -253,9 +294,18 @@ def cmd_config(a) -> None:
     if a.sites is not None:
         cfg["sites"] = onboarding._sites_from_csv(a.sites)
         changed = True
+    if a.set_shortcut:
+        if hooks.gnome_binding(a.set_shortcut) is None:
+            print("shortcut must be modifiers+key, e.g. Ctrl+Alt+P", file=sys.stderr)
+            return
+        cfg["toggle_shortcut"] = a.set_shortcut
+        changed = True
     if changed:
         config.save_config(cfg)
         print("updated", config.CONFIG_PATH)
+        if a.set_shortcut:
+            ok, msg = hooks.install_hotkey(a.set_shortcut)
+            print(("hotkey: " if ok else "hotkey NOT registered: ") + msg)
         return
     if a.edit:
         editor = os.environ.get("EDITOR", "nano")
@@ -270,7 +320,7 @@ def cmd_config(a) -> None:
 
 def cmd_uninstall(_a) -> None:
     hooks.remove_all()
-    print("Removed chud hooks from Claude Code + Codex.")
+    print("Removed chud hooks from Claude Code + Codex, and the toggle hotkey.")
     print(f"Config left at {config.DIR} (delete it manually to fully remove).")
 
 
@@ -283,6 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("setup", help="onboarding: pick mode + sites, install hooks")
     s.add_argument("--mode", choices=["focus", "always", "ask"])
     s.add_argument("--sites", help="comma-separated site names or URLs")
+    s.add_argument("--shortcut", help="hotkey to flip phone ↔ work, e.g. Ctrl+Alt+P")
     s.set_defaults(func=cmd_setup)
 
     sub.add_parser("doctor", help="check OS/session/chrome/tools").set_defaults(func=cmd_doctor)
@@ -296,6 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     ph.set_defaults(func=cmd_phone)
 
     sub.add_parser("work", help="focus back to the work window").set_defaults(func=cmd_work)
+    sub.add_parser("toggle", help="flip between the phone and the work window (the global hotkey)").set_defaults(func=cmd_toggle)
     sub.add_parser("watch-focus", help="(internal) minimize the phone once focus moves to another window").set_defaults(func=cmd_watch_focus)
 
     for name in ("app", "launch"):
@@ -308,6 +360,8 @@ def build_parser() -> argparse.ArgumentParser:
     cf = sub.add_parser("config", help="show or edit config")
     cf.add_argument("--set-mode", dest="set_mode", choices=["focus", "always", "ask"])
     cf.add_argument("--sites", help="replace the site list (comma-separated)")
+    cf.add_argument("--set-shortcut", dest="set_shortcut",
+                    help="rebind the phone ↔ work hotkey, e.g. Ctrl+Alt+P")
     cf.add_argument("--edit", action="store_true", help="open config in $EDITOR")
     cf.set_defaults(func=cmd_config)
 

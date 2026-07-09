@@ -38,6 +38,7 @@ DEFAULT_CONFIG = {
     "position": [1500, 90],  # top-right-ish; overridden per screen at launch if absent
     "size": [412, 732],  # 9:16 — one reel/short fills the frame, no next-reel peek
     "profile_dir": str(PROFILE_DIR),
+    "toggle_shortcut": "Ctrl+Alt+P",  # global hotkey for `chud toggle` (phone ↔ work)
 }
 
 DEFAULT_STATE = {

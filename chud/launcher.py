@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import html
 import json
+import os
+import shutil
+import sqlite3
 import subprocess
+import tempfile
+from pathlib import Path
 from urllib.parse import urlparse
 
 from . import config
@@ -45,6 +50,11 @@ _HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</t
          letter-spacing:.01em;max-width:calc(var(--tile) + 22px);overflow:hidden;
          text-overflow:ellipsis;white-space:nowrap}
   p{font-size:10px;color:var(--dim);text-align:center;margin:18px 0}
+  kbd{display:inline-block;padding:0 5px;border-radius:4px;font-family:inherit;
+      font-size:.95em;font-weight:600;color:var(--fg);
+      background:rgba(128,128,128,.14);border:1px solid rgba(128,128,128,.38);
+      border-bottom-width:2px}
+  .hint{font-size:11px;line-height:2.1;margin:22px 12px}
   #cfg{position:fixed;top:10px;right:10px;width:32px;height:32px;border-radius:50%;
        border:none;background:transparent;color:var(--dim);padding:0;cursor:pointer;
        display:flex;align-items:center;justify-content:center}
@@ -55,6 +65,8 @@ _HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</t
   .sw{width:38px;height:38px;border-radius:50%;border:1px solid #3a4356;
       cursor:pointer;padding:0}
   .sw.on{outline:2px solid #3b82f6;outline-offset:2px}
+  .grid a:focus{outline:none}
+  .grid a:focus .ico{outline:2px solid #3b82f6;outline-offset:3px}
   .rm{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;
       background:#2a3040;color:#8b93a7;border:none;font-size:11px;line-height:1;
       display:none;cursor:pointer;padding:0}
@@ -80,11 +92,16 @@ _HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</t
   .btns button{border:none;border-radius:8px;padding:7px 14px;font-size:12px;
                cursor:pointer;background:#232a3a;color:#cfd6e4}
   .btns .go{background:#3b82f6;color:#fff}
+  .srow{display:flex;align-items:center;justify-content:space-between;gap:11px;
+        padding:7px 10px;font-size:12px;color:#8b93a7}
+  .srow .keys{white-space:nowrap;color:#cfd6e4}
+  #sheet kbd{color:#cfd6e4;background:#232a3a;border-color:#2f3950}
+  .snote{margin:6px 10px 2px;font-size:10px;color:#5b6478}
 </style></head><body>
 <button id="cfg" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
 <h1>chud</h1>
 {{grids}}
-<p>Alt+&#8592; returns here</p>
+<p class="hint"><kbd>Alt</kbd>+<kbd>&#8592;</kbd> returns here from any app &nbsp;&middot;&nbsp; <kbd>Alt</kbd>+<kbd>&#8594;</kbd> forward<br>{{shortcut_kbds}} flips to your work</p>
 <div id="ov" hidden><div id="sheet"></div></div>
 <script>
 // User-added apps live in localStorage (the phone's own Chrome profile) so the
@@ -186,6 +203,8 @@ function applyWall(c) {
 }
 applyWall(localStorage.getItem(WKEY) || "#ffffff");
 
+// The phone ↔ work hotkey, injected from ~/.chud/config.json at generation time.
+const SHORTCUT = {{shortcut_json}};
 document.getElementById("cfg").addEventListener("click", () => {
   sheet.textContent = "";
   const h = document.createElement("h3"); h.textContent = "Wallpaper"; sheet.append(h);
@@ -201,11 +220,63 @@ document.getElementById("cfg").addEventListener("click", () => {
     wrap.append(b);
   }
   sheet.append(wrap);
+  const sh = document.createElement("h3"); sh.textContent = "Shortcuts";
+  sh.style.marginTop = "14px"; sheet.append(sh);
+  for (const [keys, what] of [[["Alt", "←"], "back to this home screen"],
+                              [["Alt", "→"], "forward into the app"],
+                              [SHORTCUT, "flip phone ↔ work"]]) {
+    const r = document.createElement("div"); r.className = "srow";
+    const t = document.createElement("span"); t.textContent = what;
+    const k = document.createElement("span"); k.className = "keys";
+    keys.forEach((key, i) => {
+      if (i) k.append("+");
+      const el = document.createElement("kbd"); el.textContent = key; k.append(el);
+    });
+    r.append(t, k); sheet.append(r);
+  }
+  const note = document.createElement("div"); note.className = "snote";
+  note.textContent = "rebind the flip key: chud config --set-shortcut";
+  sheet.append(note);
   ov.hidden = false;
 });
 
 addBtn.addEventListener("click", e => { e.preventDefault(); openSheet(); });
 render();
+
+// Arrow keys walk the app tiles by moving native focus, so Enter opens the
+// focused tile with the browser's own link handling. Left/Right follow
+// reading order; Up/Down jump to the horizontally nearest tile in the
+// adjacent row, which also carries focus across the Favorites/Recent grids.
+const tiles = () => [...document.querySelectorAll(".grid a")];
+function verticalMove(ts, cur, dir) {
+  const c = ts[cur].getBoundingClientRect();
+  const cands = ts.map((t, i) => ({ i, r: t.getBoundingClientRect() }))
+    .filter(o => dir > 0 ? o.r.top > c.top + 1 : o.r.top < c.top - 1);
+  if (!cands.length) return cur;
+  const edge = dir > 0 ? Math.min(...cands.map(o => o.r.top))
+                       : Math.max(...cands.map(o => o.r.top));
+  return cands.filter(o => Math.abs(o.r.top - edge) < 1)
+    .reduce((a, b) => Math.abs(b.r.left - c.left) < Math.abs(a.r.left - c.left) ? b : a).i;
+}
+document.addEventListener("keydown", e => {
+  if (!ov.hidden) {           // a sheet is open — don't steal its keys,
+    if (e.key === "Escape") ov.hidden = true;   // but let Esc close it
+    return;
+  }
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+  e.preventDefault();         // the page must never scroll instead
+  const ts = tiles();
+  if (!ts.length) return;
+  let cur = ts.indexOf(document.activeElement);
+  if (cur === -1) { ts[0].focus(); return; }
+  if (e.key === "ArrowLeft") cur = Math.max(0, cur - 1);
+  else if (e.key === "ArrowRight") cur = Math.min(ts.length - 1, cur + 1);
+  else cur = verticalMove(ts, cur, e.key === "ArrowDown" ? 1 : -1);
+  ts[cur].focus();
+});
+// Focus the first tile on every show (fresh load and Alt+← back-navigation
+// alike) so arrows + Enter work without a click.
+addEventListener("pageshow", () => tiles()[0]?.focus());
 </script></body></html>
 """
 
@@ -223,6 +294,33 @@ def _tile(name: str, url: str) -> str:
     )
 
 
+def _history_urls(profile_dir: str, limit: int = 40) -> list[str]:
+    """Most-recently-visited URLs from the phone's own Chrome history, so Recent
+    reflects what's actually browsed in the phone — tile taps and in-app
+    navigation never pass through the CLI, only `chud app` launches do.
+    Chrome keeps the live DB locked, so query a throwaway copy; any failure
+    just means history contributes nothing."""
+    db = Path(profile_dir) / "Default" / "History"
+    if not db.exists():
+        return []
+    fd, tmp = tempfile.mkstemp(suffix=".sqlite")
+    os.close(fd)
+    try:
+        shutil.copyfile(db, tmp)
+        con = sqlite3.connect(tmp)
+        try:
+            rows = con.execute(
+                "SELECT url FROM urls WHERE url LIKE 'http%' "
+                "ORDER BY last_visit_time DESC LIMIT ?", (limit,)).fetchall()
+        finally:
+            con.close()
+        return [r[0] for r in rows]
+    except (OSError, sqlite3.Error):
+        return []
+    finally:
+        os.unlink(tmp)
+
+
 def home_url() -> str:
     """(Re)generate the phone's home screen — a grid of favorites + recents the user
     can tap to switch apps inside the phone — and return its file:// URL."""
@@ -234,10 +332,12 @@ def home_url() -> str:
     def _host(u: str) -> str:
         return urlparse(u).netloc.removeprefix("www.")
 
-    # One recent per site: recents hold full URLs (e.g. two YouTube watch links),
-    # so dedupe by host and skip hosts already shown as favorites.
+    # One recent per site: candidates hold full URLs (e.g. two YouTube watch
+    # links), so dedupe by host and skip hosts already shown as favorites.
+    # Real browsing history first (freshest ordering), CLI launches as fallback.
+    candidates = _history_urls(cfg["profile_dir"]) + st.get("recents", [])
     rec, seen = [], {_host(s["url"]) for s in favs}
-    for u in st.get("recents", []):
+    for u in candidates:
         h = _host(u)
         if u in fav_urls or not h or h in seen:
             continue
@@ -253,9 +353,13 @@ def home_url() -> str:
             _tile(_host(u) or u, u) for u in rec) + "</div>"
     path = config.DIR / "home.html"
     config.DIR.mkdir(parents=True, exist_ok=True)
+    shortcut_keys = [p.strip() for p in cfg["toggle_shortcut"].split("+") if p.strip()]
     page = (_HOME_TMPL.replace("{{grids}}", grids)
             .replace("{{catalog}}", json.dumps(config.KNOWN_SITES))
-            .replace("{{present}}", json.dumps(sorted(fav_urls))))
+            .replace("{{present}}", json.dumps(sorted(fav_urls)))
+            .replace("{{shortcut_kbds}}",
+                     "+".join(f"<kbd>{html.escape(k)}</kbd>" for k in shortcut_keys))
+            .replace("{{shortcut_json}}", json.dumps(shortcut_keys)))
     path.write_text(page)
     return path.as_uri()
 

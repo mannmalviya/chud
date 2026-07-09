@@ -27,7 +27,11 @@ agent finishes / asks ──▶ focus snaps back to your editor
     phone's media, minimizes it, and raises your work window.
   - **Codex** — its `notify` hook raises your work window on turn-complete / approval.
 - The phone opens on a **home screen** — a tappable grid of your favorite +
-  recent sites — so you can switch apps inside the phone. `Alt+←` returns to it.
+  recent sites — so you can switch apps inside the phone. `Alt+←` returns to it,
+  `Alt+→` goes back into the app (the home screen and its ⚙ settings show these).
+- A **global hotkey** (`Ctrl+Alt+P` by default, customizable in setup or via
+  `chud config --set-shortcut`) flips between the phone and your work window
+  anytime, without waiting for a hook.
 
 ## Platform support
 
@@ -59,13 +63,14 @@ git clone https://github.com/mannmalviya/chud && cd chud && ./install.sh
 ## Usage
 
 ```bash
-chud setup        # onboarding: pick default mode + quick-toggle sites
+chud setup        # onboarding: pick default mode + quick-toggle sites + hotkey
 chud on           # arm the break-phone for this session
 chud off          # focus mode
+chud toggle       # flip phone ↔ work (bound globally, Ctrl+Alt+P by default)
 chud app tiktok   # open a site in the phone (name or URL)
 chud doctor       # check OS / session / chrome / tools
-chud config       # show config;  --set-mode / --sites / --edit to change
-chud uninstall    # remove the agent hooks
+chud config       # show config;  --set-mode / --sites / --set-shortcut / --edit
+chud uninstall    # remove the agent hooks + hotkey
 ```
 
 **Default modes** (chosen in setup, editable anytime):
@@ -104,7 +109,7 @@ rm -rf ~/.chud       # removes config, state, and the phone's Chrome profile
 - **Wayland** is unsupported (see above).
 - **macOS** always-on-top is approximate and needs an Accessibility grant.
 - **Codex** has no "turn started" event, so the phone auto-*hides* on turn-complete;
-  raise it with `chud phone` or a hotkey when you kick off a Codex turn.
+  raise it with the toggle hotkey (or `chud phone`) when you kick off a Codex turn.
 - You're using the real sites in a real browser with your own login — no scraping.
   Personal use.
 
