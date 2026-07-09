@@ -187,5 +187,7 @@ def pause_phone_media(profile_dir: str) -> None:
                   "org.freedesktop.DBus.ListNames"])
     for name, pid in re.findall(r'"(org\.mpris\.MediaPlayer2\.\S+\.instance(\d+))"', names):
         if pid in pids:
-            _do(["dbus-send", "--session", f"--dest={name}",
-                 "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player.Pause"])
+            # --print-reply matters: without it dbus-send flags the call
+            # "no reply expected" and Chrome drops it — the video keeps playing.
+            _out(["dbus-send", "--session", "--print-reply", f"--dest={name}",
+                  "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player.Pause"])
