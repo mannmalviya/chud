@@ -4,7 +4,7 @@
 
 <h1 align="center">chud</h1>
 
-<p align="center"><b>A phone that hovers over your editor while your coding agent thinks — and yanks you back the second it's done.</b></p>
+<p align="center"><b>chud hovers over your editor while your coding agent thinks — and yanks you back the second it's done.</b></p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
@@ -18,13 +18,13 @@
 ---
 
 ```text
-you submit a prompt ──▶ phone rises over your work ──▶ you scroll while the agent thinks
+you submit a prompt ──▶ chud rises over your work ──▶ you scroll while the agent thinks
 agent finishes / asks ──▶ focus snaps back to your editor
 ```
 
-It's a **real Chrome window** shaped like a phone — real logins, real video, real audio.
+It's a **real Chrome window** — real logins, real video, real audio.
 Scroll TikTok, Instagram, or play chess during the wait. When the agent finishes or
-needs you, the phone pauses its media, gets out of the way, and your editor takes focus.
+needs you, chud pauses its media, gets out of the way, and your editor takes focus.
 Off by default; you opt in per session.
 
 ## Install
@@ -57,10 +57,10 @@ chud setup merges the hooks itself.
 ## Usage
 
 ```bash
-chud on           # arm the break-phone for this session
+chud on           # arm chud for this session
 chud off          # focus mode
-chud toggle       # flip phone ↔ work (global hotkey: Ctrl+Alt+P)
-chud app tiktok   # open a site in the phone
+chud toggle       # flip chud ↔ work (global hotkey: Ctrl+Alt+P)
+chud app tiktok   # open a site in chud
 chud doctor       # check your setup
 chud uninstall    # remove hooks + hotkey
 ```
