@@ -116,6 +116,12 @@ def raise_phone() -> None:
     wid = _phone_window_id()
     if not wid:
         return
+    # Bare phone screen: remove the WM's title bar/borders (Chrome's own
+    # tab-like bar is disabled via the profile preference — see launcher).
+    # Motif hints: flags=2 selects the decorations field, 0 = none. Idempotent,
+    # so setting it on every raise also catches a freshly-launched window.
+    _do(["xprop", "-id", wid, "-f", "_MOTIF_WM_HINTS", "32c",
+         "-set", "_MOTIF_WM_HINTS", "2, 0, 0, 0, 0"])
     # Pin above everything, then focus.
     _do(["wmctrl", "-i", "-r", wid, "-b", "add,above"])
     _activate(wid)

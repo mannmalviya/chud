@@ -20,6 +20,9 @@ agent finishes / asks ──▶ focus snaps back to your editor
   a separate window sidesteps that entirely.
 - A tiny CLI (`chud`) pins/raises windows via the OS: **Win32 / macOS
   Accessibility / X11 (`wmctrl`+`xdotool`)**.
+- On Linux the phone is **frameless** — no title bar or browser chrome, just a
+  bare phone-shaped screen with its own status bar (clock + battery) on the
+  home screen. Move it with `Super`+drag.
 - Agent **hooks** flip between the phone and your "work window" (the terminal or
   editor you launched the agent in, captured at session start):
   - **Claude Code** — `UserPromptSubmit` (and answering an agent question) raises

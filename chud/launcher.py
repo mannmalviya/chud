@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,8 +26,22 @@ _HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</t
 <style>
   :root{--fg:#1c1c1e;--dim:#00000073;--tile:clamp(46px,12vw,60px)}
   body.dark{--fg:#f2f4f8;--dim:#ffffff8c}
-  body{margin:0;background:#fff;color:var(--fg);font-family:system-ui,sans-serif;
-       transition:background .25s}
+  body{margin:0;padding-top:24px;background:#fff;color:var(--fg);
+       font-family:system-ui,sans-serif;transition:background .25s}
+  #sbar{position:fixed;top:0;left:0;right:0;height:24px;z-index:5;
+        display:flex;align-items:center;justify-content:space-between;
+        padding:2px 14px 0;box-sizing:border-box;font-size:12.5px;
+        font-weight:700;color:var(--fg);user-select:none;-webkit-user-select:none}
+  .sicons{display:flex;gap:6px;align-items:center}
+  .sig{display:flex;gap:1.5px;align-items:flex-end;height:10px}
+  .sig i{width:2.5px;background:var(--fg);border-radius:1px}
+  #sbar svg{width:15px;height:13px;display:block}
+  .bat{position:relative;width:21px;height:10.5px;border:1.5px solid var(--fg);
+       border-radius:3.5px;opacity:.95}
+  .bat::after{content:"";position:absolute;right:-4.5px;top:2px;width:2px;
+              height:4.5px;background:var(--fg);border-radius:0 1.5px 1.5px 0}
+  .bat i{position:absolute;top:1.5px;bottom:1.5px;left:1.5px;width:72%;
+         background:var(--fg);border-radius:1.5px}
   h1{font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim);
      text-align:center;margin:26px 0 4px}
   h2{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);
@@ -55,7 +70,7 @@ _HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</t
       background:rgba(128,128,128,.14);border:1px solid rgba(128,128,128,.38);
       border-bottom-width:2px}
   .hint{font-size:11px;line-height:2.1;margin:22px 12px}
-  #cfg{position:fixed;top:10px;right:10px;width:32px;height:32px;border-radius:50%;
+  #cfg{position:fixed;top:28px;right:10px;width:32px;height:32px;border-radius:50%;
        border:none;background:transparent;color:var(--dim);padding:0;cursor:pointer;
        display:flex;align-items:center;justify-content:center}
   #cfg:hover{background:rgba(128,128,128,.18)}
@@ -98,6 +113,10 @@ _HOME_TMPL = r"""<!doctype html><html><head><meta charset="utf-8"><title>chud</t
   #sheet kbd{color:#cfd6e4;background:#232a3a;border-color:#2f3950}
   .snote{margin:6px 10px 2px;font-size:10px;color:#5b6478}
 </style></head><body>
+<div id="sbar"><span id="clock"></span><span class="sicons">
+<span class="sig"><i style="height:4px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:10px"></i></span>
+<svg viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M3 8a13 13 0 0 1 18 0"/><path d="M7 12.5a7.5 7.5 0 0 1 10 0"/><circle cx="12" cy="17" r="1.6" fill="currentColor" stroke="none"/></svg>
+<span class="bat"><i id="batfill"></i></span></span></div>
 <button id="cfg" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
 <h1>chud</h1>
 {{grids}}
@@ -203,6 +222,19 @@ function applyWall(c) {
 }
 applyWall(localStorage.getItem(WKEY) || "#ffffff");
 
+// Status bar: live clock + real battery level (the window has no OS frame,
+// so this bar is the phone's only "chrome").
+const clockEl = document.getElementById("clock");
+const tick = () => clockEl.textContent = new Date()
+  .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  .replace(/\s?[AP]M/i, "");
+tick(); setInterval(tick, 10000);
+navigator.getBattery?.().then(b => {
+  const fill = document.getElementById("batfill");
+  const upd = () => fill.style.width = Math.round(b.level * 100) + "%";
+  upd(); b.addEventListener("levelchange", upd);
+});
+
 // The phone ↔ work hotkey, injected from ~/.chud/config.json at generation time.
 const SHORTCUT = {{shortcut_json}};
 document.getElementById("cfg").addEventListener("click", () => {
@@ -224,7 +256,8 @@ document.getElementById("cfg").addEventListener("click", () => {
   sh.style.marginTop = "14px"; sheet.append(sh);
   for (const [keys, what] of [[["Alt", "←"], "back to this home screen"],
                               [["Alt", "→"], "forward into the app"],
-                              [SHORTCUT, "flip phone ↔ work"]]) {
+                              [SHORTCUT, "flip phone ↔ work"],
+                              [["Super", "drag"], "move the phone"]]) {
     const r = document.createElement("div"); r.className = "srow";
     const t = document.createElement("span"); t.textContent = what;
     const k = document.createElement("span"); k.className = "keys";
@@ -375,6 +408,35 @@ def _kill_existing(profile_dir: str) -> None:
                        capture_output=True, text=True)
 
 
+def _strip_browser_frame(profile_dir: str) -> None:
+    """Turn off Chrome's self-drawn title bar (the tab-like strip) for the phone
+    profile, deferring decorations to the window manager — which the X11 backend
+    then strips too, leaving a bare phone-shaped screen. Must run between kill
+    and launch: Chrome rewrites Preferences on shutdown, so wait for the old
+    phone to fully exit or our edit would be overwritten."""
+    if os_name() != "linux":
+        return
+    for _ in range(20):
+        r = subprocess.run(["pgrep", "-f", f"user-data-dir={profile_dir}"],
+                           capture_output=True, text=True)
+        if not r.stdout.strip():
+            break
+        time.sleep(0.1)
+    prefs = Path(profile_dir) / "Default" / "Preferences"
+    try:
+        data = json.loads(prefs.read_text()) if prefs.exists() else {}
+    except (OSError, ValueError):
+        return
+    if data.setdefault("browser", {}).get("custom_chrome_frame") is False:
+        return
+    data["browser"]["custom_chrome_frame"] = False
+    try:
+        prefs.parent.mkdir(parents=True, exist_ok=True)
+        prefs.write_text(json.dumps(data))
+    except OSError:
+        pass
+
+
 def launch(url: str) -> None:
     chrome = chrome_binary()
     if not chrome:
@@ -386,6 +448,7 @@ def launch(url: str) -> None:
     x, y = cfg["position"]
 
     _kill_existing(profile)
+    _strip_browser_frame(profile)
 
     args = [
         chrome,
