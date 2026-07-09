@@ -294,15 +294,30 @@ const DKEY = "chudDock", GKEY = "chudFreeGeom";
 const dockBtns = [...document.querySelectorAll(".dock")];
 const dockMode = () => localStorage.getItem(DKEY) || "free";
 const markDock = m => dockBtns.forEach(b => b.classList.toggle("on", b.dataset.dock === m));
+// A window within a few px of full height is dock-shaped, not floating —
+// e.g. after drag-unsticking a stuck phone, which keeps the docked size.
+const dockShaped = h => h >= screen.availHeight - 40;
 function applyDock(m) {
-  // Leaving free mode: remember the floating geometry so "free" can restore it.
-  if (m !== "free" && dockMode() === "free")
+  // Leaving free mode: remember the floating geometry so "free" can restore
+  // it — unless the window is still dock-shaped, which would poison the
+  // saved float geometry and make the float button a visible no-op.
+  if (m !== "free" && dockMode() === "free" && !dockShaped(outerHeight))
     localStorage.setItem(GKEY, JSON.stringify(
       { x: screenX, y: screenY, w: outerWidth, h: outerHeight }));
   localStorage.setItem(DKEY, m); markDock(m);
   if (m === "free") {
-    const g = JSON.parse(localStorage.getItem(GKEY) || "null");
-    if (g) { resizeTo(g.w, g.h); moveTo(g.x, g.y); }
+    let g = JSON.parse(localStorage.getItem(GKEY) || "null");
+    if (!g || dockShaped(g.h)) {
+      // Nothing sane to restore: fall back to a phone-shaped window (the
+      // launcher's 9:16 default), vertically centered at the current x.
+      const w = outerWidth, h = Math.min(Math.round(w * 732 / 412),
+                                         screen.availHeight - 60);
+      g = { w, h,
+            x: Math.min(Math.max(screenX, screen.availLeft),
+                        screen.availLeft + screen.availWidth - w),
+            y: screen.availTop + Math.round((screen.availHeight - h) / 2) };
+    }
+    resizeTo(g.w, g.h); moveTo(g.x, g.y);
   } else {
     resizeTo(outerWidth, screen.availHeight);
     moveTo(m === "left" ? screen.availLeft
